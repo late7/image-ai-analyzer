@@ -5,6 +5,7 @@
 ## Installation
 
 pip install -r requirements.txt
+cd image-ai-analyzer
 
 ## Create a .env File
 Edit .env file or
