@@ -1,9 +1,9 @@
 import os
 import base64
 
-from fastapi import FastAPI, File, UploadFile, Request
+from fastapi import FastAPI, File, UploadFile, Request, HTTPException, Header
 from fastapi.responses import HTMLResponse
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # For environment variable loading
 from dotenv import load_dotenv
@@ -14,19 +14,25 @@ from openai import OpenAI
 # 1. Load environment variables from .env
 load_dotenv()
 
-# 2. Read the API key from environment
+# 2. Read the API key and access token from environment
 openai_api_key = os.getenv("OPENAI_API_KEY")
+access_token = os.getenv("ACCESS_TOKEN")
 
 # 3. Initialize the OpenAI client with the API key
 client = OpenAI(api_key=openai_api_key)
 
 app = FastAPI()
 
+def verify_access_token(token: Optional[str]):
+    if token != access_token:
+        raise HTTPException(status_code=401, detail="Invalid or missing access token")
+
 @app.get("/", response_class=HTMLResponse)
-def get_upload_form(request: Request):
+def get_upload_form(request: Request, x_access_token: Optional[str] = Header(None)):
     """
     Returns a simple HTML form for manual image upload.
     """
+    verify_access_token(x_access_token)
     html_content = """
     <!DOCTYPE html>
     <html>
@@ -45,11 +51,13 @@ def get_upload_form(request: Request):
     return HTMLResponse(content=html_content, status_code=200)
 
 @app.post("/analyze")
-async def analyze_image(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def analyze_image(file: UploadFile = File(...), x_access_token: Optional[str] = Header(None)) -> Dict[str, Any]:
     """
     Receives an image via form-data,
     encodes it in Base64, then calls the GPT-4 Vision endpoint.
     """
+    verify_access_token(x_access_token)
+    
     # 1. Read and Base64-encode the image
     image_bytes = await file.read()
     base64_image = base64.b64encode(image_bytes).decode("utf-8")
