@@ -2,7 +2,9 @@
 
 ## Setup Python env (optional)
 python -m venv venv
+
 $ ./venv/Scripts/activate   # on windows Git Bash
+
 $ ./venv/bin/activate
 
 
