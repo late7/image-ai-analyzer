@@ -1,40 +1,101 @@
 import os
 import base64
-
-from fastapi import FastAPI, File, UploadFile, Request, HTTPException, Header, Form
+from fastapi import FastAPI, File, UploadFile, Request, HTTPException, Header, Form, Body
 from fastapi.responses import HTMLResponse
-from typing import Any, Dict, Optional
-
-# For environment variable loading
+from typing import Any, Dict, Optional, List
 from dotenv import load_dotenv
-
-# Import the OpenAI library
 from openai import OpenAI
 
-# 1. Load environment variables from .env
+# Load environment variables
 load_dotenv()
-
-# 2. Read the API key and access token from environment
 openai_api_key = os.getenv("OPENAI_API_KEY")
 access_token = os.getenv("ACCESS_TOKEN")
 
 print(f"OPENAI_API_KEY: {openai_api_key}")
 print(f"ACCESS_TOKEN: {access_token}")
 
-# 3. Initialize the OpenAI client with the API key
+# Initialize OpenAI client
 client = OpenAI(api_key=openai_api_key)
 
 app = FastAPI()
 
 def verify_access_token(token: Optional[str]):
+    """Check if the provided token matches the stored access token."""
     if token != access_token:
         raise HTTPException(status_code=401, detail="Invalid or missing access token")
 
+def call_gpt4_vision(base64_images: List[str]) -> Dict[str, Any]:
+    """
+    Calls GPT-4 Vision API with the given list of base64-encoded images.
+    Returns the API response.
+    """
+    prompt = (
+        'You are a professional analyzer that evaluates profile pictures for an App. '
+        'You are given images one by one. Answer either "true" or "false". '
+        'For false: provide a short reasoning advising the user on how to select a proper photo. '
+        'True: Profile picture should clearly contain a human face in front-facing view, standing or sitting, '
+        'wearing business or business casual attire, and free from offensive or NSFW content. '
+        'False: Detect and report any inappropriate images, such as offensive, manipulated, or AI-generated faces.'
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": [{"type": "text", "text": prompt}]
+        }
+    ]
+
+    # Append all images to the request
+    for base64_image in base64_images:
+        messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64_image}"
+                    }
+                }
+            ],
+        })
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "content_compliance",
+                    "schema": {
+                        "type": "object",
+                        "required": ["status", "violation_reason"],
+                        "properties": {
+                            "status": {
+                                "type": "boolean",
+                                "description": "Indicates whether the content is appropriate."
+                            },
+                            "violation_reason": {
+                                "type": "string",
+                                "description": "Explanation of why the content violates policies and suggestions for correction."
+                            }
+                        },
+                        "additionalProperties": False
+                    },
+                    "strict": True
+                }
+            },
+            temperature=0.5,
+            max_completion_tokens=1142,
+            top_p=0.79,
+        )
+        return {"response": response.choices[0].message.content}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/", response_class=HTMLResponse)
 def get_upload_form(request: Request):
-    """
-    Returns a simple HTML form for manual image upload.
-    """
+    """Returns an HTML form for manual image upload."""
     html_content = """
     <!DOCTYPE html>
     <html>
@@ -54,88 +115,38 @@ def get_upload_form(request: Request):
     return HTMLResponse(content=html_content, status_code=200)
 
 @app.post("/analyze")
-# async def analyze_image(file: UploadFile = File(...), x_access_token: Optional[str] = Header(None)) -> Dict[str, Any]:
 async def analyze_image(file: UploadFile = File(...), x_access_token: Optional[str] = Form(None)) -> Dict[str, Any]:
-    """
-    Receives an image via form-data,
-    encodes it in Base64, then calls the GPT-4 Vision endpoint.
-    """
+    """Handles file upload and analysis via GPT-4 Vision."""
     verify_access_token(x_access_token)
     
-    # 1. Read and Base64-encode the image
+    # Read and encode image
     image_bytes = await file.read()
     base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
-    # 2. Build messages array with "text" and "image_url" blocks
-    prompt = 'You are professional analyser that analyses profile picture for an App. You are given images one by one. Answer either "true" or "false". For false: give a short reasoning that advice end user to select proper photo. True: Profile picture should clearly contain human face in front or standing or sitting face facing the camera. Clothing, if visible, should be business or business casual as the App is meant for professional use. False: Detect and report as lafse any unappropriate images and parts of images. Especially:  offensive or containing NSFW content. Detect also if the image is manipulated for face change or similar discontinuity on pixel level.'
-    # TODO: Define Prompt... Below is the DeepSeek optimized prompt ( Lukas ) Lasse: I couldn't get this working very well.
-    # prompt:   Check if the profile picture meets these requirements: real photo (not AI generated), one clear human face, good quality, no logos/copyrighted material, no NSFW/NSFL content, no overlays, appropriate clothing (shirt/pants), non-distracting background.
+    # Call GPT-4 Vision API
+    return call_gpt4_vision([base64_image])
 
-    messages = [
-        {
-          "role": "system",
-          "content": [
-            {
-              "type": "text",
-              "text": prompt
-            }
-          ]
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64_image}"
-                    }
-                },
-            ],
-        }
-    ]
-
-        # 3. Call the GPT-4 Vision endpoint
-    try:
-        response = client.chat.completions.create(
-                model="gpt-4o-mini",  # Use the correct model name
-                messages=messages,
-                        # max_tokens=2000,  # Adjust as needed
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "content_compliance",
-                        "schema": {
-                            "type": "object",
-                            "required": [
-                            "status",
-                            "violation_reason"
-                            ],
-                            "properties": {
-                            "status": {
-                                "type": "boolean",
-                                "description": "Indicates whether the content is propriate."
-                            },
-                            "violation_reason": {
-                                "type": "string",
-                                "description": "Explanation of why the content violates policies and instruction for correction"
-                            }
-                            },
-                            "additionalProperties": False
-                        },
-                        "strict": True
-                    }
-                },
-                temperature=0.5,
-                max_completion_tokens=1142,
-                top_p=0.79,
-            )
-    except Exception as e:
-        return {"error": str(e)}
-
-    # 4. Return response from GPT-4o-mini
-    return {
-        "response": response.choices[0].message.content  # Extract the content from the response
+@app.post("/analyze-json")
+async def analyze_image_json(
+    request: Request,
+    x_access_token: Optional[str] = Header(None),
+    payload: Dict[str, Any] = Body(...)
+):
+    """
+    Receives one or more images in a JSON payload:
+    {
+      "images_base64": ["<base64_string1>", "<base64_string2>"]
     }
+    """
+    verify_access_token(x_access_token)
+
+    # Extract base64 images
+    base64_images = payload.get("images_base64", [])
+    if not base64_images:
+        raise HTTPException(status_code=400, detail="Missing images_base64 in request body")
+
+    # Call GPT-4 Vision API
+    return call_gpt4_vision(base64_images)
 
 if __name__ == "__main__":
     # Run the FastAPI app with uvicorn
