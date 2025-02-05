@@ -15,6 +15,7 @@ cd image-ai-analyzer
 
 ## Create a .env File
 Edit .env file or
+
 echo "OPENAI_API_KEY=sk-xxxx" >> .env
 
 ## Run the Server
@@ -27,7 +28,9 @@ Open http://localhost:8000/.
 Upload a .jpg or .png file.
 Check the JSON result (the model’s text) in your browser or browser dev tools.
 
-## Test with Postman or cURL
+## Test with Postman or cURL or test.sh
 
 
 curl -X POST -F "file=@test.jpg" http://localhost:8000/analyze
+
+test.sh tests JSON POST
